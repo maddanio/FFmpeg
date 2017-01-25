@@ -200,7 +200,7 @@ static void remap_planar16_slice(AVFilterContext *ctx, void *arg, int jobnr, int
         //uint16_t *dst        = (uint16_t *)out->data[plane];
         const int dlinesize  = out->linesize[plane] / 2;
         const uint16_t *src  = (const uint16_t *)in->data[plane];
-	uint16_t *dst        = (uint16_t *)out->data[plane] + slice_start * dlinesize;
+	    uint16_t *dst        = (uint16_t *)out->data[plane] + slice_start * dlinesize;
         const int slinesize  = in->linesize[plane] / 2;
         const uint16_t *xmap = (const uint16_t *)xin->data[0] + slice_start * xlinesize;
         const uint16_t *ymap = (const uint16_t *)yin->data[0] + slice_start * ylinesize;

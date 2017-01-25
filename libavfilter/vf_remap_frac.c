@@ -144,13 +144,17 @@ static void remap_frac_planar(RemapFracContext *s, const AVFrame *in,
                 uint16_t x_pos_frac = x_pos & (one - 1);
                 uint16_t y_pos_frac = y_pos & (one - 1);
                 if (y_pos_int < (in->height - 1) && x_pos_int < (in->width - 1)) {
+#if 0
+                    dst[x] = src[y_pos_int * slinesize + x_pos_int];
+#else
                     dst[x] = 
                     (uint8_t)((
-                (uint16_t)(src[y_pos_int * slinesize + x_pos_int]) * x_pos_frac * y_pos_frac +
-                (uint16_t)(src[y_pos_int * slinesize + x_pos_int + 1]) * (one - x_pos_frac) * y_pos_frac +
-                (uint16_t)(src[(y_pos_int + 1) * slinesize + x_pos_int + 1]) * (one - x_pos_frac) * (one - y_pos_frac) +
-                (uint16_t)(src[(y_pos_int + 1) * slinesize + x_pos_int]) * x_pos_frac * (one - y_pos_frac)
-                        ) >> 3);
+                (uint16_t)(src[y_pos_int * slinesize + x_pos_int]) * (one - x_pos_frac) * (one - y_pos_frac) +
+                (uint16_t)(src[y_pos_int * slinesize + x_pos_int + 1]) * x_pos_frac * (one - y_pos_frac) +
+                (uint16_t)(src[(y_pos_int + 1) * slinesize + x_pos_int + 1]) * x_pos_frac * y_pos_frac +
+                (uint16_t)(src[(y_pos_int + 1) * slinesize + x_pos_int]) * (one - x_pos_frac) * y_pos_frac
+                        ) >> 6);
+#endif
                 } else {
                     dst[x] = 0;
                 }
@@ -188,13 +192,14 @@ static void remap_frac_planar16(RemapFracContext *s, const AVFrame *in,
                 uint32_t x_pos_frac = x_pos & (one - 1);
                 uint32_t y_pos_frac = y_pos & (one - 1);
                 if (y_pos_int < (in->height - 1) && x_pos_int < (in->width - 1)) {
+                    uint16_t y_offset = y_pos_int * slinesize;
                     dst[x] = 
                     (uint16_t)((
-                (uint32_t)(src[y_pos_int * slinesize + x_pos_int]) * x_pos_frac * y_pos_frac +
-                (uint32_t)(src[y_pos_int * slinesize + x_pos_int + 1]) * (one - x_pos_frac) * y_pos_frac +
-                (uint32_t)(src[(y_pos_int + 1) * slinesize + x_pos_int + 1]) * (one - x_pos_frac) * (one - y_pos_frac) +
-                (uint32_t)(src[(y_pos_int + 1) * slinesize + x_pos_int]) * x_pos_frac * (one - y_pos_frac)
-                        ) >> 3);
+                (uint32_t)(src[y_offset + x_pos_int]) * x_pos_frac * y_pos_frac +
+                (uint32_t)(src[y_offset + x_pos_int + 1]) * (one - x_pos_frac) * y_pos_frac +
+                (uint32_t)(src[y_offset + slinesize + x_pos_int + 1]) * (one - x_pos_frac) * (one - y_pos_frac) +
+                (uint32_t)(src[y_offset + slinesize + x_pos_int]) * x_pos_frac * (one - y_pos_frac)
+                        ) >> 6);
                 } else {
                     dst[x] = 0;
                 }
@@ -204,6 +209,7 @@ static void remap_frac_planar16(RemapFracContext *s, const AVFrame *in,
             ymap += ylinesize;
         }
     }
+    printf("remapplanar16\n");
 }
 
 /**
@@ -244,7 +250,7 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
                 (uint32_t)(src[y_pos_int * slinesize + (x_pos_int + 1) * step + c]) * (one - x_pos_frac) * y_pos_frac +
                 (uint32_t)(src[(y_pos_int + 1) * slinesize + (x_pos_int + 1) * step + c]) * (one - x_pos_frac) * (one - y_pos_frac) +
                 (uint32_t)(src[(y_pos_int + 1) * slinesize + x_pos_int * step + c]) * x_pos_frac * (one - y_pos_frac)
-                        ) >> 3);
+                        ) >> 6);
                 }
             } else {
                 for (c = 0; c < s->nb_components; c++) {
@@ -256,6 +262,7 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
         xmap += xlinesize;
         ymap += ylinesize;
     }
+    printf("remappacked8\n");
 }
 
 static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
@@ -290,7 +297,7 @@ static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
                 (uint16_t)(src[y_pos_int * slinesize + (x_pos_int + 1) * step + c]) * (one - x_pos_frac) * y_pos_frac +
                 (uint16_t)(src[(y_pos_int + 1) * slinesize + (x_pos_int + 1) * step + c]) * (one - x_pos_frac) * (one - y_pos_frac) +
                 (uint16_t)(src[(y_pos_int + 1) * slinesize + x_pos_int * step + c]) * x_pos_frac * (one - y_pos_frac)
-                        ) >> 3);
+                        ) >> 6);
                 }
             } else {
                 for (c = 0; c < s->nb_components; c++) {
@@ -302,6 +309,7 @@ static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
         xmap += xlinesize;
         ymap += ylinesize;
     }
+    printf("remappacked16\n");
 }
 
 static int config_input(AVFilterLink *inlink)
