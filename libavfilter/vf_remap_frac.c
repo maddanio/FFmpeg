@@ -52,9 +52,12 @@ typedef struct RemapFracContext {
     int step;
     FFFrameSync fs;
 
+/*
     void (*remap_frac)(struct RemapFracContext *s, const AVFrame *in,
                   const AVFrame *xin, const AVFrame *yin,
                   AVFrame *out);
+                  */
+    void (*remap_frac_slice)(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs);
 } RemapFracContext;
 
 #define OFFSET(x) offsetof(RemapFracContext, x)
@@ -65,6 +68,13 @@ static const AVOption remap_frac_options[] = {
 };
 
 AVFILTER_DEFINE_CLASS(remap_frac);
+
+typedef struct ThreadData {
+    AVFrame *in, *xin, *yin, *out;
+    int nb_planes;
+    int nb_components;
+    int step;
+} ThreadData;
 
 static int query_formats(AVFilterContext *ctx)
 {
@@ -118,16 +128,20 @@ fail:
  * pixels are copied from source to target using :
  * Target_frame[y][x] = Source_frame[ ymap[y][x] ][ [xmap[y][x] ];
  */
-static void remap_frac_planar(RemapFracContext *s, const AVFrame *in,
-                         const AVFrame *xin, const AVFrame *yin,
-                         AVFrame *out)
+static void remap_frac_planar_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *xin = td->xin;
+    const AVFrame *yin = td->yin;
+    const AVFrame *out = td->out;
+
     const int xlinesize = xin->linesize[0] / 2;
     const int ylinesize = yin->linesize[0] / 2;
     const uint16_t one = 1 << 3;
     int x , y, plane;
 
-    for (plane = 0; plane < s->nb_planes ; plane++) {
+    for (plane = 0; plane < td->nb_planes ; plane++) {
         uint8_t *dst         = out->data[plane];
         const int dlinesize  = out->linesize[plane];
         const uint8_t *src   = in->data[plane];
@@ -166,16 +180,20 @@ static void remap_frac_planar(RemapFracContext *s, const AVFrame *in,
     }
 }
 
-static void remap_frac_planar16(RemapFracContext *s, const AVFrame *in,
-                           const AVFrame *xin, const AVFrame *yin,
-                           AVFrame *out)
+static void remap_frac_planar16_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *xin = td->xin;
+    const AVFrame *yin = td->yin;
+    const AVFrame *out = td->out;
+
     const int xlinesize = xin->linesize[0] / 2;
     const int ylinesize = yin->linesize[0] / 2;
     const uint32_t one = 1 << 3;
     int x , y, plane;
 
-    for (plane = 0; plane < s->nb_planes ; plane++) {
+    for (plane = 0; plane < td->nb_planes ; plane++) {
         uint16_t *dst        = (uint16_t *)out->data[plane];
         const int dlinesize  = out->linesize[plane] / 2;
         const uint16_t *src  = (const uint16_t *)in->data[plane];
@@ -218,10 +236,14 @@ static void remap_frac_planar16(RemapFracContext *s, const AVFrame *in,
  * pixels are copied from source to target using :
  * Target_frame[y][x] = Source_frame[ ymap[y][x] ][ [xmap[y][x] ];
  */
-static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
-                         const AVFrame *xin, const AVFrame *yin,
-                         AVFrame *out)
+static void remap_frac_packed_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *xin = td->xin;
+    const AVFrame *yin = td->yin;
+    const AVFrame *out = td->out;
+
     uint8_t *dst = out->data[0];
     const uint16_t one = 1 << 3;
     const uint8_t *src  = in->data[0];
@@ -231,7 +253,7 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
     const int ylinesize = yin->linesize[0] / 2;
     const uint16_t *xmap = (const uint16_t *)xin->data[0];
     const uint16_t *ymap = (const uint16_t *)yin->data[0];
-    const int step = s->step;
+    const int step = td->step;
     int c, x, y;
 
     for (y = 0; y < out->height; y++) {
@@ -243,7 +265,7 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
             uint32_t x_pos_frac = x_pos & (one - 1);
             uint32_t y_pos_frac = y_pos & (one - 1);
             if (y_pos_int < (in->height - 1) && x_pos_int < (in->width - 1)) {
-                for (c = 0; c < s->nb_components; c++) {
+                for (c = 0; c < td->nb_components; c++) {
                     dst[x * step + c] = 
                     (uint16_t)((
                 (uint32_t)(src[y_pos_int * slinesize + x_pos_int * step + c]) * x_pos_frac * y_pos_frac +
@@ -253,7 +275,7 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
                         ) >> 6);
                 }
             } else {
-                for (c = 0; c < s->nb_components; c++) {
+                for (c = 0; c < td->nb_components; c++) {
                     dst[x * step + c] = 0;
                 }
             }
@@ -265,10 +287,14 @@ static void remap_frac_packed(RemapFracContext *s, const AVFrame *in,
     printf("remappacked8\n");
 }
 
-static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
-                           const AVFrame *xin, const AVFrame *yin,
-                           AVFrame *out)
+static void remap_frac_packed16_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *xin = td->xin;
+    const AVFrame *yin = td->yin;
+    const AVFrame *out = td->out;
+
     uint16_t *dst = (uint16_t *)out->data[0];
     const uint16_t one = 1 << 3;
     const uint16_t *src  = (const uint16_t *)in->data[0];
@@ -278,7 +304,7 @@ static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
     const int ylinesize = yin->linesize[0] / 2;
     const uint16_t *xmap = (const uint16_t *)xin->data[0];
     const uint16_t *ymap = (const uint16_t *)yin->data[0];
-    const int step = s->step / 2;
+    const int step = td->step / 2;
     int c, x, y;
 
     for (y = 0; y < out->height; y++) {
@@ -290,7 +316,7 @@ static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
             uint16_t x_pos_frac = x_pos & (one - 1);
             uint16_t y_pos_frac = y_pos & (one - 1);
             if (y_pos_int < (in->height - 1) && x_pos_int < (in->width - 1)) {
-                for (c = 0; c < s->nb_components; c++) {
+                for (c = 0; c < td->nb_components; c++) {
                     dst[x * step + c] = 
                     (uint8_t)((
                 (uint16_t)(src[y_pos_int * slinesize + x_pos_int * step + c]) * x_pos_frac * y_pos_frac +
@@ -300,7 +326,7 @@ static void remap_frac_packed16(RemapFracContext *s, const AVFrame *in,
                         ) >> 6);
                 }
             } else {
-                for (c = 0; c < s->nb_components; c++) {
+                for (c = 0; c < td->nb_components; c++) {
                     dst[x * step + c] = 0;
                 }
             }
@@ -323,15 +349,15 @@ static int config_input(AVFilterLink *inlink)
 
     if (desc->comp[0].depth == 8) {
         if (s->nb_planes > 1 || s->nb_components == 1) {
-            s->remap_frac = remap_frac_planar;
+            s->remap_frac_slice = remap_frac_planar_slice;
         } else {
-            s->remap_frac = remap_frac_packed;
+            s->remap_frac_slice = remap_frac_packed_slice;
         }
     } else {
         if (s->nb_planes > 1 || s->nb_components == 1) {
-            s->remap_frac = remap_frac_planar16;
+            s->remap_frac_slice = remap_frac_planar16_slice;
         } else {
-            s->remap_frac = remap_frac_packed16;
+            s->remap_frac_slice = remap_frac_packed16_slice;
         }
     }
 
@@ -357,12 +383,21 @@ static int process_frame(FFFrameSync *fs)
         if (!out)
             return AVERROR(ENOMEM);
     } else {
+        ThreadData td;
+
         out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
         if (!out)
             return AVERROR(ENOMEM);
         av_frame_copy_props(out, in);
 
-        s->remap_frac(s, in, xpic, ypic, out);
+        td.in  = in;
+        td.xin = xpic;
+        td.yin = ypic;
+        td.out = out;
+        td.nb_planes = s->nb_planes;
+        td.nb_components = s->nb_components;
+        td.step = s->step;
+        ctx->internal->execute(ctx, s->remap_frac_slice, &td, NULL, FFMIN(outlink->h, ctx->graph->nb_threads));
     }
     out->pts = av_rescale_q(in->pts, s->fs.time_base, outlink->time_base);
 
@@ -475,5 +510,6 @@ AVFilter ff_vf_remap_frac = {
     .inputs        = remap_frac_inputs,
     .outputs       = remap_frac_outputs,
     .priv_class    = &remap_frac_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
+//    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

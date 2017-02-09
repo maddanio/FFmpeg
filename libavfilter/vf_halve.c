@@ -51,9 +51,11 @@ typedef struct HalveContext {
     int nb_components;
     int step;
     FFFrameSync fs;
-
+/*
     void (*halve)(struct HalveContext *s, const AVFrame *in,
                   AVFrame *out);
+*/
+    void (*halve_slice)(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs);
 } HalveContext;
 
 #define OFFSET(x) offsetof(HalveContext, x)
@@ -64,6 +66,13 @@ static const AVOption halve_options[] = {
 };
 
 AVFILTER_DEFINE_CLASS(halve);
+
+typedef struct ThreadData {
+    AVFrame *in, *out;
+    int nb_planes;
+    int nb_components;
+    int step;
+} ThreadData;
 
 static int query_formats(AVFilterContext *ctx)
 {
@@ -107,12 +116,14 @@ fail:
  * pixels are copied from source to target using :
  * Target_frame[y][x] = Source_frame[ ymap[y][x] ][ [xmap[y][x] ];
  */
-static void halve_planar(HalveContext *s, const AVFrame *in,
-                         AVFrame *out)
+static void halve_planar_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *out = td->out;
     int x , y, plane;
 
-    for (plane = 0; plane < s->nb_planes ; plane++) {
+    for (plane = 0; plane < td->nb_planes ; plane++) {
         uint8_t *dst        = out->data[plane];
         const int dlinesize  = out->linesize[plane];
         const uint8_t *src  = in->data[plane];
@@ -133,12 +144,14 @@ static void halve_planar(HalveContext *s, const AVFrame *in,
     }
 }
 
-static void halve_planar16(HalveContext *s, const AVFrame *in,
-                           AVFrame *out)
+static void halve_planar16_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *out = td->out;
     int x , y, plane;
 
-    for (plane = 0; plane < s->nb_planes ; plane++) {
+    for (plane = 0; plane < td->nb_planes ; plane++) {
         uint16_t *dst        = (uint16_t *)out->data[plane];
         const int dlinesize  = out->linesize[plane] / 2;
         const uint16_t *src  = (const uint16_t *)in->data[plane];
@@ -168,19 +181,21 @@ static void halve_planar16(HalveContext *s, const AVFrame *in,
  * Target_frame[y][x] = Source_frame[ ymap[y][x] ][ [xmap[y][x] ];
  */
 
-static void halve_packed(HalveContext *s, const AVFrame *in,
-                         AVFrame *out)
+static void halve_packed_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *out = td->out;
     uint8_t *dst = out->data[0];
     const uint8_t *src  = in->data[0];
     const int dlinesize = out->linesize[0];
     const int slinesize = in->linesize[0];
-    const int step = s->step;
+    const int step = td->step;
     int c, x, y;
 
     for (y = 0; y < out->height; y++) {
         for (x = 0; x < out->width; x++, dst += step, src += step) {
-            for (c = 0; c < s->nb_components; ++c) {
+            for (c = 0; c < td->nb_components; ++c) {
                 dst[c] = (uint8_t)(
                     (
                         (uint16_t)(src[c]) +
@@ -195,19 +210,21 @@ static void halve_packed(HalveContext *s, const AVFrame *in,
     }
 }
 
-static void halve_packed16(HalveContext *s, const AVFrame *in,
-                           AVFrame *out)
+static void halve_packed16_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
+    const ThreadData *td = (ThreadData*)arg;
+    const AVFrame *in  = td->in;
+    const AVFrame *out = td->out;
     uint16_t *dst = (uint16_t *)out->data[0];
     const uint16_t *src  = (const uint16_t *)in->data[0];
     const int dlinesize = out->linesize[0] / 2;
     const int slinesize = in->linesize[0] / 2;
-    const int step = s->step / 2;
+    const int step = td->step / 2;
     int c, x, y;
 
     for (y = 0; y < out->height; y++) {
         for (x = 0; x < out->width; x++, dst += step, src += step) {
-            for (c = 0; c < s->nb_components; ++c) {
+            for (c = 0; c < td->nb_components; ++c) {
                 dst[c] = (uint16_t)(
                     (
                         (uint32_t)(src[c]) +
@@ -233,15 +250,15 @@ static int config_input(AVFilterLink *inlink)
 
     if (desc->comp[0].depth == 8) {
         if (s->nb_planes > 1 || s->nb_components == 1) {
-            s->halve = halve_planar;
+            s->halve_slice = halve_planar_slice;
         } else {
-            s->halve = halve_packed;
+            s->halve_slice = halve_packed_slice;
         }
     } else {
         if (s->nb_planes > 1 || s->nb_components == 1) {
-            s->halve = halve_planar16;
+            s->halve_slice = halve_planar16_slice;
         } else {
-            s->halve = halve_packed16;
+            s->halve_slice = halve_packed16_slice;
         }
     }
 
@@ -265,12 +282,19 @@ static int process_frame(FFFrameSync *fs)
         if (!out)
             return AVERROR(ENOMEM);
     } else {
+        ThreadData td;
+
         out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
         if (!out)
             return AVERROR(ENOMEM);
         av_frame_copy_props(out, in);
 
-        s->halve(s, in, out);
+        td.in  = in;
+        td.out = out;
+        td.nb_planes = s->nb_planes;
+        td.nb_components = s->nb_components;
+        td.step = s->step;
+        ctx->internal->execute(ctx, s->halve_slice, &td, NULL, FFMIN(outlink->h, ctx->graph->nb_threads));
     }
     out->pts = av_rescale_q(in->pts, s->fs.time_base, outlink->time_base);
 
@@ -354,5 +378,6 @@ AVFilter ff_vf_halve = {
     .inputs        = halve_inputs,
     .outputs       = halve_outputs,
     .priv_class    = &halve_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
+//    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };
