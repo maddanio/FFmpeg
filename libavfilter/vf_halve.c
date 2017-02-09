@@ -127,7 +127,7 @@ static void halve_planar(HalveContext *s, const AVFrame *in,
                         (uint16_t)(src[slinesize + 1])
                     ) >> 2);
             }
-            src  += slinesize - in->width;
+            src  += 2 * slinesize - in->width;
             dst  += dlinesize - out->width;
         }
     }
@@ -153,7 +153,7 @@ static void halve_planar16(HalveContext *s, const AVFrame *in,
                         (uint32_t)(src[slinesize + 1])
                     ) >> 2);
             }
-            src  += slinesize - in->width;
+            src  += 2 * slinesize - in->width;
             dst  += dlinesize - out->width;
         }
     }
@@ -190,7 +190,7 @@ static void halve_packed(HalveContext *s, const AVFrame *in,
                     ) >> 2);
             }
         }
-        src  += slinesize - in->width * step;
+        src  += 2 * slinesize - in->width * step;
         dst  += dlinesize - out->width * step;
     }
 }
@@ -217,7 +217,7 @@ static void halve_packed16(HalveContext *s, const AVFrame *in,
                     ) >> 2);
             }
         }
-        src  += slinesize - in->width * step;
+        src  += 2 * slinesize - in->width * step;
         dst  += dlinesize - out->width * step;
     }
 }
